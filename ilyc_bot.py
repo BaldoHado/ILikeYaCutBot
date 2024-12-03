@@ -2,6 +2,7 @@ import os
 import cv2
 import io
 import imageio.v3
+import keyboard
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage.transform import resize
@@ -14,10 +15,10 @@ from scipy.spatial import procrustes
 
 
 # ======================================== ASM Model ======================================== 
-def asm_predict(new_image, resize=True, show=True):
+def asm_predict(imagepath, resize=True, show=True):
     '''
     Input:
-    - new_image: NumPy array of an image; fed into ASM model to predict points
+    - imagepath: filepath to image; fed into ASM model to predict points
     - resize: set True to resize new_image
     - show: set True to show the overlay of the image and the predicted points
         - Note, the visualization will have 2 keypoints labeled but they are both identical
@@ -26,43 +27,45 @@ def asm_predict(new_image, resize=True, show=True):
     - tuple of the new image (resized if resize=True) and the predicted keypoints
     '''
     loaded_model = load_model("./asm_data/model/facial_keypoints_model_50.h5")
-    new_image = cv2.imread(new_image)
+    new_image = cv2.imread(imagepath)
     if resize:
       new_image = cv2.resize(new_image, (250, 300)) / 255.0
     new_image_keypoints = loaded_model.predict(np.expand_dims(new_image, axis=0))
     new_image_keypoints_processed = visualize_keypoints(new_image, new_image_keypoints[0], new_image_keypoints[0], show=show)
     return new_image, new_image_keypoints_processed
 
-def visualize_keypoints(image, keypoints, predicted_keypoints, resize=True, debug=False, show=True):
+def visualize_keypoints(image, keypoints1, keypoints2, label1='Keypoints 1', label2='Keypoints 2', resize=True, debug=False, show=True):
     '''
     Overlay keypoints and predicted_keypoints on top of image
 
     Input:
     - image: NumPy array of an image; used to display the inputted image
-    - keypoints: the ground truth or reference ASM keypoints
-    - predicted_keypoints: keypoints predicted by our ASM model
+    - keypoints1: ASM keypoints
+    - keypoints2: ASM keypoints
+    - label1: title for keypoints1
+    - label2: title for keypoints2
     - resize: set True to scale keypoints and predicted_keypoints to resized dimensions
     - debug: set True to print the predicted_keypoints matrix
     - show: set True to make a plot of the overlay
 
     Returns:
-    - predicted_keypoints (if resize=False, this is the same as the input)
+    - keypoints2 (if resize=False, this is the same as the input)
     '''
     if resize:
-      keypoints = resize_keypoints(keypoints)
-      predicted_keypoints = resize_keypoints(predicted_keypoints)
+      keypoints1 = resize_keypoints(keypoints1)
+      keypoints2 = resize_keypoints(keypoints2)
     if debug:
-      print(f"hello this is the keypoints matrix\n{predicted_keypoints}")
+      print(f"hello this is the keypoints matrix\n{keypoints2}")
 
     # Display the image
     if show:
       plt.imshow(image)
-      plt.scatter(keypoints[:, 0], keypoints[:, 1], c='blue', label='Hair Points', s=12)  # Ground truth
-      plt.scatter(predicted_keypoints[:, 0], predicted_keypoints[:, 1], c='red', label='Prediction', s=10)  # Predictions
+      plt.scatter(keypoints1[:, 0], keypoints1[:, 1], c='blue', label=label1, s=12)  # Ground truth
+      plt.scatter(keypoints2[:, 0], keypoints2[:, 1], c='red', label=label2, s=10)  # Predictions
       plt.legend()
       plt.axis("off")
       plt.show()
-    return predicted_keypoints
+    return keypoints2
 
 # Convert normalized keypoints back to the resized image dimensions
 def resize_keypoints(keypoints, dimensions=[250, 300]):
@@ -122,7 +125,7 @@ def take_image_from_camera(output_file='camera_out.jpg'):
         print("Error: Unable to access the camera.")
         return
 
-    print("Camera is ready. Press 'q' to quit.")
+    print("Camera is ready. Press 'q' to quit or any other key to continue.")
 
     captured_frame = None
     while True:
@@ -142,32 +145,13 @@ def take_image_from_camera(output_file='camera_out.jpg'):
         plt.pause(0.001)
 
         # Prompt user for input
-        user_input = input("Press 'c' to capture an image, 'a' to take another frame, or 'q' to quit: ").strip().lower()
-        if user_input == 'c':
-            captured_frame = resize(frame, (300, 250, 3), mode='reflect', anti_aliasing=True).astype('float32')
-            print(f"Image captured and saved to {output_file}")
-            break
-        elif user_input == 'a':
-            continue
-        elif user_input == 'q':
+        if keyboard.is_pressed('q'):
             print("Quit without capturing.")
             break
 
-        # NOTE: doesn't work on jupyter notebooks
-        # # Check for user input
-        # user_input = plt.waitforbuttonpress(timeout=0)
-        # if user_input:
-        #     # Get the key pressed
-        #     key = plt.get_current_fig_manager().canvas.manager.keypress
-        #     if key == 'c':
-        #         # Capture the current frame
-        #         captured_frame = frame
-        #         print(f"Image captured and saved to {output_file}")
-        #         break
-        #     elif key == 'q':
-        #         # Quit without capturing
-        #         print("Quit without capturing.")
-        #         break
+        captured_frame = resize(frame_rgb, (250, 300, 3), mode='reflect', anti_aliasing=True).astype('float32')
+        captured_frame = (captured_frame * 255).astype(np.uint8)  # Convert back to uint8
+        print(f"Image captured and saved to {output_file}")
 
     # Save the captured frame if available
     if captured_frame is not None:
@@ -201,12 +185,67 @@ def align_points(reference, to_align):
     aligned_keypoints += reference_centroid
 
     # 5) Homography transformation for finer alignment
-    homography_matrix, _ = cv2.findHomography(aligned_keypoints, reference_ordered, cv2.RANSAC)
+    homography_matrix, mask = cv2.findHomography(aligned_keypoints, reference_ordered, cv2.RANSAC)
+
+    # Filter out outliers
+    mask = mask.ravel().astype(bool)  # Convert mask to boolean
+    if not np.any(mask):  # If no inliers are found
+        print("No inliers found. Skipping homography refinement.")
+        return aligned_keypoints, similarity_disparity, None
+
+    # Apply mask
+    aligned_keypoints = aligned_keypoints[mask]
+    reference_ordered = reference_ordered[mask]
+
+    # Recompute homography with inliers only
+    homography_matrix, _ = cv2.findHomography(aligned_keypoints, reference_ordered, 0)
+
     aligned_predicted_homo = np.hstack((aligned_keypoints, np.ones((aligned_keypoints.shape[0], 1))))  # Homogeneous coordinates
     aligned_points_homo = aligned_predicted_homo @ homography_matrix.T
     aligned_points = aligned_points_homo[:, :2] / aligned_points_homo[:, 2:]  # Back to Cartesian coordinates
 
     return aligned_points, similarity_disparity, homography_matrix
+
+def align_points_affine(reference, to_align):
+    '''
+    Aligns `to_align` points to `reference` points using an affine transformation.
+    
+    Parameters:
+        reference (np.ndarray): Ground truth points (N x 2 array, unordered).
+        to_align (np.ndarray): Points to align (N x 2 array, unordered).
+    
+    Returns:
+        aligned_points (np.ndarray): Aligned points after applying Procrustes and affine transformation.
+        similarity_disparity (float): Disparity after Procrustes alignment.
+        affine_matrix (np.ndarray): Affine transformation matrix.
+    '''
+    # 1) Order the points in both sets
+    reference_ordered = order_points(reference)
+    to_align_ordered = order_points(to_align)
+
+    # 2) Compute the centroid of the ground truth and align set
+    reference_centroid = np.mean(reference_ordered, axis=0)
+    to_align_centroid = np.mean(to_align_ordered, axis=0)
+
+    # 3) Procrustes analysis for similarity transformation
+    reference_centered = reference_ordered - reference_centroid
+    to_align_centered = to_align_ordered - to_align_centroid
+    _, aligned_keypoints, similarity_disparity = procrustes(reference_centered, to_align_centered)
+
+    # 4) Restore the aligned predicted points to the reference centroid
+    aligned_keypoints += reference_centroid
+
+    # 5) Compute affine transformation
+    affine_matrix, inliers = cv2.estimateAffinePartial2D(aligned_keypoints, reference_ordered, method=cv2.RANSAC)
+
+    if affine_matrix is None:
+        print("Affine transformation failed. Returning Procrustes-aligned points.")
+        return aligned_keypoints, similarity_disparity, None
+
+    # Apply affine transformation
+    aligned_points = cv2.transform(np.expand_dims(aligned_keypoints, axis=0), affine_matrix)[0]
+
+    return aligned_points, similarity_disparity, affine_matrix
 
 def order_points(points):
     '''
@@ -230,22 +269,23 @@ def order_points(points):
 
     return ordered_points
 
-def plot_transformations(ground_truth, predicted, predicted_aligned, similarity_disparity):
+def plot_transformations(hair_points, hair_points_aligned, predicted, similarity_disparity):
   '''
   Helper function to show the ground truth keypoints, predicted keypoints, and aligned predicted keypoints
-  Input:
-  - ground_truth: 2D array of ground truth keypoints
+
+  Inputs:
+  - hair_points: 2D array of hair keypoints
+  - hair_points_aligned: 2D array of hair keypoints after affine transformation
   - predicted: 2D array of predicted keypoints
-  - predicted_aligned: 2D array of aligned predicted keypoints
   - similarity_disparity: float metric of the similarity between predicted_aligned and ground_truth
   
   Returns:
   - None
   '''
   plt.figure(figsize=(8, 6))
-  plt.scatter(ground_truth[:, 0], ground_truth[:, 1], label='Ground Truth (Unordered)', c='blue', marker='o')
-  plt.scatter(predicted[:, 0], predicted[:, 1], label='Predicted (Unordered)', c='red', marker='x')
-  plt.scatter(predicted_aligned[:, 0], predicted_aligned[:, 1], label='Predicted (Aligned)', c='green', marker='+')
+  plt.scatter(hair_points[:, 0], hair_points[:, 1], label='Hair Points (Unaligned)', c='blue', marker='o')
+  plt.scatter(hair_points_aligned[:, 0], hair_points_aligned[:, 1], label='Hair Points (Aligned)', c='green', marker='+')
+  plt.scatter(predicted[:, 0], predicted[:, 1], label='Predicted', c='red', marker='x')
   plt.legend()
   plt.title(f"Alignment with Combined Ordering\nSimilarity Disparity: {similarity_disparity:.4f}")
   plt.xlabel("X-axis")
@@ -274,8 +314,6 @@ def ilyc_interface():
     elif image_mode == 'f':
         # NOTE: currently crashes if user quits while in camera mode :/
         filepath = input("Enter your filepath: ")
-        print(filepath)
-        print(type(filepath))
         img = take_image_from_filepath(filepath)
     elif image_mode == 'q':
         return
@@ -283,10 +321,9 @@ def ilyc_interface():
         ilyc_interface()
         return
 
-    # Preview image and prompt for validity
+    # Preview image after removing background and resizing; prompt for validity
     plt.imshow(img)
     plt.show()
-    # sleep(2)  # there's some delay for showing the image --> this accounts for it
     valid_input = input("Is this a valid picture? (y/n) ")
     if valid_input.lower() != 'y':
         ilyc_interface()
@@ -294,25 +331,37 @@ def ilyc_interface():
 
     # TODO: connect to Adam's face shape, prompt user for hairstyle
     hair_selection = "fade"  # TODO: replace with Adam's stuff
-    hair_points_file = './asm_data/frontalshapes_manuallyannotated_46points/23a.pts'  # TODO: link hair_selection to ASM of that hair style
+    hair_points_file = './asm_data/frontalshapes_manuallyannotated_46points/83a.pts'  # TODO: link hair_selection to ASM of that hair style
+    hair_image = cv2.imread('./asm_data/frontalimages_spatiallynormalized/83a.jpg')  # TODO: replace with actual hair image
     hair_points = load_pts_file(hair_points_file)  # TODO: replace points_path with the hairstyle points
 
     # Apply model to generate predicted ASM on inputted image
     resized_image, predicted_points = asm_predict(filepath, show=False)
+    with open('points.txt', 'a') as f:
+        f.write(str(predicted_points))
 
     # Make the hair points align with the predicted points
-    aligned_points, similarity_disparity, homography_matrix = align_points(predicted_points, hair_points)
+    aligned_hair, similarity_disparity, affine_matrix = align_points_affine(predicted_points, hair_points)
+    print(affine_matrix)
+
+    # Apply the affine transformation on hair image
+    output_size = (resized_image.shape[1], resized_image.shape[0])
+    transformed_image = cv2.warpAffine(hair_image, affine_matrix, output_size, flags=cv2.INTER_LINEAR)
+    plt.imshow(transformed_image)
+    plt.show()
 
     # OPTIONAL: Plots (plots upside down because origin is at the bottom left but in images its at the top left)
-    # plot_transformations(ground_truth_points, predicted_points, predicted_aligned, similarity_disparity)
+    plot_transformations(hair_points, aligned_hair, predicted_points, similarity_disparity)
 
     # Visualize
-    # NOTE: first function call is with the homography stuff, second is without
-    visualize_keypoints(resized_image, aligned_points, hair_points, resize=False)
-    visualize_keypoints(resized_image, predicted_points, hair_points, resize=False)
+    # NOTE: first function call is with the transformation stuff, second is without
+    visualize_keypoints(resized_image, predicted_points, aligned_hair, label1='Predicted', label2='Aligned Hair', resize=False)
+    visualize_keypoints(resized_image, predicted_points, hair_points, label1='Predicted', label2='Unaligned Hair', resize=False)
+    return ilyc_interface()
 
 
 def main():
+    # TESTING: ./asm_data/frontalimages_spatiallynormalized/190b.jpg
     ilyc_interface()
 
 if __name__ == "__main__":
