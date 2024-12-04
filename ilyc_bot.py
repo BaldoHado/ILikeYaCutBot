@@ -397,14 +397,17 @@ def take_image_from_camera(output_file="camera_out.jpg"):
         if keyboard.is_pressed("q"):
             print("Quit without capturing.")
             break
-
-        captured_frame = resize(
-            frame_rgb, (250, 300, 3), mode="reflect", anti_aliasing=True
-        ).astype("float32")
-        captured_frame = (captured_frame * 255).astype(
-            np.uint8
-        )  # Convert back to uint8
-        print(f"Image captured and saved to {output_file}")
+        elif keyboard.is_pressed("c"):
+            captured_frame = resize(
+                frame_rgb, (128, 128, 3), mode="reflect", anti_aliasing=True
+            ).astype("float32")
+            captured_frame = (captured_frame * 255).astype(
+                np.uint8
+            )  # Convert back to uint8
+            print(f"Image captured and saved to {output_file}")
+            break
+        else:
+            continue
 
     # Save the captured frame if available
     if captured_frame is not None:
@@ -639,7 +642,7 @@ Optimal Hairstyles: {', '.join(hair_style_recomm["recommendations"])}
     hair_selection = ""
     while hair_selection not in hair_style_recomm["recommendations"]:
         hair_selection = input(
-            f"Pick one of the following to apply ({', '.join(hair_style_recomm["recommendations"])}): "
+            f"Pick one of the following to apply ({', '.join(hair_style_recomm['recommendations'])}): "
         ).lower()
     hair_points_file = "./asm_data/frontalshapes_manuallyannotated_46points/83a.pts"  # TODO: link hair_selection to ASM of that hair style
     hair_image = cv2.imread(
@@ -697,6 +700,7 @@ Optimal Hairstyles: {', '.join(hair_style_recomm["recommendations"])}
 def main():
     # TESTING: ./asm_data/frontalimages_spatiallynormalized/190b.jpg
     ilyc_interface()
+    # get_face_shape_model()
 
 
 if __name__ == "__main__":
