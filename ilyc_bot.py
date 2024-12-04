@@ -8,6 +8,7 @@ from skimage.transform import resize
 from rembg import remove
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from keras.layers import Input, Dense, Conv2D, MaxPooling2D, Flatten, Lambda
 from tensorflow.keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
 from scipy.spatial import procrustes
@@ -114,9 +115,35 @@ def load_pts_file(filepath):
 
 # ======================================== Face Shape Classification Model ========================================
 def get_face_shape_model():
-    return keras.saving.load_model(
-        "face_shape_models/face_shape_identifier.keras", safe_mode=False
+    # return keras.saving.load_model(
+    #     "face_shape_models/face_shape_identifier.keras",
+    #     custom_objects={"lambda": lambda x: x / 128 - 1},
+    # )
+    model = Sequential(
+        [
+            Input(shape=(128, 128, 3)),
+            Lambda(lambda x: x / 128 - 1),
+            Conv2D(32, [3, 3], activation="relu"),
+            MaxPooling2D([2, 2], 2),
+            Dropout(0.3),
+            Conv2D(64, [3, 3], activation="relu"),
+            MaxPooling2D([2, 2], 2),
+            Dropout(0.3),
+            Conv2D(128, [3, 3], activation="relu"),
+            MaxPooling2D([2, 2], 2),
+            Dropout(0.3),
+            Conv2D(256, [3, 3], activation="relu"),
+            MaxPooling2D([2, 2], 2),
+            Dropout(0.3),
+            Conv2D(512, [3, 3], activation="relu"),
+            MaxPooling2D([2, 2], 2),
+            Dropout(0.3),
+            Flatten(),
+            Dense(5, activation="softmax"),
+        ]
     )
+    model.load_weights("fs_weights.weights.h5")
+    return model
 
 
 def predict_face_shape(model, img):
@@ -598,7 +625,7 @@ def ilyc_interface():
 
     fs_model = get_face_shape_model()
     fs_pred = predict_face_shape(fs_model, img)
-    gender = ''
+    gender = ""
     while gender not in ["male", "female"]:
         gender = input("What is your gender? ( Male / Female ) ").lower()
     hair_style_recomm = get_optimal_hairstyle(gender, fs_pred)
@@ -609,7 +636,7 @@ Optimal Hairstyles: {', '.join(hair_style_recomm["recommendations"])}
 {hair_style_recomm["explanation"]}
         """
     )
-    hair_selection = ''
+    hair_selection = ""
     while hair_selection not in hair_style_recomm["recommendations"]:
         hair_selection = input(
             f"Pick one of the following to apply ({', '.join(hair_style_recomm["recommendations"])}): "
