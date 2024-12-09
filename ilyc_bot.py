@@ -1,21 +1,6 @@
 import cv2
-import io
-import imageio.v3
-import keyboard
 import numpy as np
 import matplotlib.pyplot as plt
-from skimage.transform import resize
-from rembg import remove
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from keras.layers import Input, Dense, Conv2D, MaxPooling2D, Flatten, Lambda
-from tensorflow.keras.optimizers import Adam
-from sklearn.model_selection import train_test_split
-from scipy.spatial import procrustes
-import keras
-import skimage
-from typing import Literal
-from textwrap import dedent
 from data_preprocessing import *
 from face_shape_classifier import *
 from asm_processing import *
@@ -64,75 +49,87 @@ def ilyc_interface():
     while gender not in ["male", "female"]:
         gender = input("What is your gender? ( Male / Female ) ").lower()
     hair_style_recomm = get_optimal_hairstyle(gender, fs_pred)
-    print(
-        f"""
-Your Predicted Face Shape: {fs_pred}\n
-Optimal Hairstyles: {', '.join(hair_style_recomm["recommendations"])}
-{hair_style_recomm["explanation"]}
-        """
-    )
-    hair_selection = ""
-    while hair_selection not in hair_style_recomm["recommendations"]:
-        hair_selection = input(
-            f"Pick one of the following to apply ({', '.join(hair_style_recomm['recommendations'])}): "
-        ).lower()
-    hair_selection = "_".join(hair_selection.split())
-    hair_points_file = f"./hair_points/{hair_selection}.pts" 
-    print("Selection:", f"./hair_templates/{hair_selection}_hair.png")
-    hair_image = cv2.imread(f"./hair_templates/{hair_selection}_hair.png", flags=cv2.IMREAD_UNCHANGED)
-    hair_image = cv2.cvtColor(hair_image, cv2.COLOR_BGRA2RGBA)
-    hair_points = load_pts_file(hair_points_file)
 
-    # Apply model to generate predicted ASM on inputted image
-    resized_image, predicted_points = asm_predict(filepath, show=False)
-    with open("points.txt", "a") as f:
-        f.write(str(predicted_points))
+    # Reprompt until user quits
+    while True:
+        print(
+            f"""
+    Your Predicted Face Shape: {fs_pred}\n
+    Optimal Hairstyles: {', '.join(hair_style_recomm["recommendations"])}
+    {hair_style_recomm["explanation"]}
+            """
+        )
+        hair_selection = ""
+        while hair_selection not in hair_style_recomm["recommendations"]:
+            hair_selection = input(
+                f"Pick one of the following to apply ({', '.join(hair_style_recomm['recommendations'])}): "
+            ).lower()
+        hair_selection = "_".join(hair_selection.split())
+        hair_points_file = f"./hair_points/{hair_selection}.pts" 
+        hair_image = cv2.imread(f"./hair_templates/{hair_selection}_hair.png", flags=cv2.IMREAD_UNCHANGED)
+        hair_image = cv2.cvtColor(hair_image, cv2.COLOR_BGRA2RGBA)
+        hair_points = load_pts_file(hair_points_file)
 
-    image_width, image_height = resized_image.shape[1], resized_image.shape[0]
-    predicted_points /= np.array([image_width, image_height])
-    hair_points /= np.array([image_width, image_height])
+        # Apply model to generate predicted ASM on inputted image
+        resized_image, predicted_points = asm_predict(filepath, show=False)
+        with open("points.txt", "a") as f:
+            f.write(str(predicted_points))
 
-    # Make the hair points align with the predicted points
-    aligned_hair, similarity_disparity, affine_matrix = align_points_affine(
-        predicted_points, hair_points
-    )
-    print(affine_matrix)
+        # Normalize points for transformation
+        image_width, image_height = resized_image.shape[1], resized_image.shape[0]
+        predicted_points /= np.array([image_width, image_height])
+        hair_points /= np.array([image_width, image_height])
 
+        # Make the hair points align with the predicted points
+        aligned_hair, similarity_disparity, affine_matrix = align_points_affine(
+            predicted_points, hair_points
+        )
 
-    # Apply affine transformation
-    output_size = (image_width, image_height)
-    hair_image = cv2.resize(hair_image, (250, 300)) / 255.0
-    transformed_hair = recenter_warped_image(hair_image, affine_matrix, output_size)
+        # Apply affine transformation
+        output_size = (image_width, image_height)
+        hair_image = cv2.resize(hair_image, (250, 300)) / 255.0
+        transformed_hair = recenter_warped_image(hair_image, affine_matrix, output_size)
 
-    # plt.imshow(hair_image)
-    # plt.show()
-    # plt.imshow(transformed_hair)
-    # plt.show()
+        # OPTIONAL: Plots (plots upside down because origin is at the bottom left but in images its at the top left)
+        plot_transformations(
+            hair_points, aligned_hair, predicted_points, similarity_disparity
+        )
 
-    # OPTIONAL: Plots (plots upside down because origin is at the bottom left but in images its at the top left)
-    plot_transformations(
-        hair_points, aligned_hair, predicted_points, similarity_disparity
-    )
+        # Visualize
+        # NOTE: first function call just shows the hair on the face, second includes keypoints
+        visualize_keypoints(
+            resized_image,
+            predicted_points,
+            aligned_hair,
+            image2=transformed_hair,
+            label1="Predicted",
+            label2="Aligned Hair",
+            resize=True,
+            show=False
+        )
 
-    # Visualize
-    # NOTE: first function call is with the transformation stuff, second is without
-    visualize_keypoints(
-        resized_image,
-        predicted_points,
-        aligned_hair,
-        image2=transformed_hair,
-        label1="Predicted",
-        label2="Aligned Hair",
-        resize=True,
-        show=True
-    )
-    return ilyc_interface()
+        visualize_keypoints(
+            resized_image,
+            predicted_points,
+            aligned_hair,
+            image2=transformed_hair,
+            label1="Predicted",
+            label2="Aligned Hair",
+            resize=True,
+            show=True
+        )
+
+        reprompt = input("Try another hair? 'y' to continue, 'n' to input a new image, and anything else to quit: ").strip().lower()
+        if reprompt == 'y':
+            continue
+        elif reprompt == 'n':
+            return ilyc_interface()
+        else:
+            return
 
 
 def main():
-    # TESTING: ./asm_data/frontalimages_spatiallynormalized/190b.jpg
     ilyc_interface()
-    # get_face_shape_model()
 
 
 if __name__ == "__main__":

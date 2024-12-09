@@ -22,9 +22,7 @@ def asm_predict(imagepath, resize=True, show=True):
     if resize:
         new_image = cv2.resize(new_image, (250, 300)) / 255.0
     new_image_keypoints = loaded_model.predict(np.expand_dims(new_image, axis=0))
-    new_image_keypoints_processed = visualize_keypoints(
-        new_image, new_image_keypoints[0], new_image_keypoints[0], show=show
-    )
+    new_image_keypoints_processed = resize_keypoints(new_image_keypoints)
     return new_image, new_image_keypoints_processed
 
 
@@ -58,20 +56,20 @@ def visualize_keypoints(
         keypoints2 = resize_keypoints(keypoints2)
 
     # Display the image
-    if show:
-        plt.imshow(image)
-        if image2 is not None:
-            plt.imshow(image2)
+    plt.imshow(image)
+    if image2 is not None:
+        plt.imshow(image2)
 
+    if show:
         plt.scatter(
             keypoints1[:, 0], keypoints1[:, 1], c="blue", label=label1, s=12
-        )  # Ground truth
+        ) 
         plt.scatter(
             keypoints2[:, 0], keypoints2[:, 1], c="red", label=label2, s=10
-        )  # Predictions
-        plt.legend()
-        plt.axis("off")
-        plt.show()
+        )  
+    plt.legend()
+    plt.axis("off")
+    plt.show()
     return keypoints2
 
 
@@ -169,31 +167,116 @@ def align_points_affine(reference, to_align):
     # 3) Procrustes analysis for similarity transformation
     reference_centered = reference_ordered - reference_centroid
     to_align_centered = to_align_ordered - to_align_centroid
-    # _, aligned_keypoints, similarity_disparity = procrustes(
-    #     reference_centered, to_align_centered
-    # )
+    _, aligned_keypoints, similarity_disparity = procrustes(
+        reference_centered, to_align_centered
+    )
 
-    # # 4) Restore the aligned predicted points to the reference centroid
-    # aligned_keypoints += reference_centroid
+    # 4) Restore the aligned predicted points to the reference centroid
+    aligned_keypoints += reference_centroid
 
-    # # 5) Compute affine transformation
-    # affine_matrix, inliers = cv2.estimateAffinePartial2D(
-    #     aligned_keypoints, reference_ordered, method=cv2.RANSAC
-    # )
+    # 5) Compute affine transformation
+    affine_matrix, inliers = cv2.estimateAffinePartial2D(
+        aligned_keypoints, reference_ordered, method=cv2.RANSAC
+    )
 
-    # if affine_matrix is None:
-    #     print("Affine transformation failed. Returning Procrustes-aligned points.")
-    #     return aligned_keypoints, similarity_disparity, None
+    if affine_matrix is None:
+        print("Affine transformation failed. Returning Procrustes-aligned points.")
+        return aligned_keypoints, similarity_disparity, None
 
-    # # Apply affine transformation
-    # aligned_points = cv2.transform(
-    #     np.expand_dims(aligned_keypoints, axis=0), affine_matrix
-    # )[0]
+    # Apply affine transformation
+    aligned_points = cv2.transform(
+        np.expand_dims(aligned_keypoints, axis=0), affine_matrix
+    )[0]
 
-    # return aligned_points, similarity_disparity, affine_matrix
-    affine_matrix, _ = cv2.estimateAffinePartial2D(to_align_ordered, reference_ordered, method=cv2.RANSAC)
-    aligned_points = cv2.transform(np.expand_dims(to_align_ordered, axis=0), affine_matrix)[0]
-    return aligned_points, 0, affine_matrix
+    return aligned_points, similarity_disparity, affine_matrix
+    # affine_matrix, _ = cv2.estimateAffinePartial2D(to_align_ordered, reference_ordered, method=cv2.RANSAC)
+    # aligned_points = cv2.transform(np.expand_dims(to_align_ordered, axis=0), affine_matrix)[0]
+    # return aligned_points, 0, affine_matrix
+
+def order_points(points):
+    """
+    Order list of points based on angular position relative to the centroid (1st) and distance to centroid (2nd)
+    Inputs:
+    - points: 2D NumPy array of keypoints
+
+    Returns:
+    - ordered 2D NumPy array of keypoints
+    """
+    centroid = np.mean(points, axis=0)  # centroid
+
+    angles = np.arctan2(
+        points[:, 1] - centroid[1], points[:, 0] - centroid[0]
+    )  # angle about the centroid
+
+    distances = np.linalg.norm(points - centroid, axis=1)  # distance to centroid
+
+    # sort by angle first, then distance
+    criteria = np.column_stack((angles, distances))
+    ordered_indices = np.lexsort((criteria[:, 1], criteria[:, 0]))
+    ordered_points = points[ordered_indices]
+
+    return ordered_points
+
+def compute_procrustes_matrix(reference_ordered, to_align_ordered):
+    """
+    Compute the Procrustes affine transformation matrix that maps to_align_ordered to 
+    reference_ordered using rotation, scaling, and translation derived from Procrustes analysis.
+    
+    Parameters:
+        reference_ordered (np.ndarray): Nx2 array of reference points (already ordered)
+        to_align_ordered (np.ndarray): Nx2 array of points to align (already ordered)
+        
+    Returns:
+        P (np.ndarray): 2x3 affine matrix representing the Procrustes transform
+        scale (float): scaling factor found by Procrustes
+        R (np.ndarray): 2x2 rotation matrix
+        t (np.ndarray): translation vector (1x2)
+    """
+    # Compute centroids
+    reference_centroid = np.mean(reference_ordered, axis=0)
+    to_align_centroid = np.mean(to_align_ordered, axis=0)
+
+    # Center points at their centroids
+    reference_centered = reference_ordered - reference_centroid
+    to_align_centered = to_align_ordered - to_align_centroid
+
+    # Compute matrix for SVD
+    A = reference_centered.T @ to_align_centered
+    U, S, Vt = np.linalg.svd(A)
+
+    # Compute rotation
+    R = U @ Vt
+    # Ensure a proper rotation (check for reflection)
+    if np.linalg.det(R) < 0:
+        U[:, -1] *= -1
+        R = U @ Vt
+
+    # Compute scale
+    # scale = sum of singular values / sum of squared distances in to_align_centered
+    var_y = np.sum(to_align_centered**2)
+    scale = np.sum(S) / var_y
+
+    # Translation
+    t = reference_centroid - scale * (to_align_centroid @ R)
+
+    # Construct the Procrustes affine matrix P:
+    # P maps original to_align_ordered points to their Procrustes-aligned counterpart.
+    P = np.array([
+        [scale * R[0,0], scale * R[0,1], t[0]],
+        [scale * R[1,0], scale * R[1,1], t[1]]
+    ])
+
+    return P, scale, R, t
+
+def to_homogeneous(T):
+    # T is 2x3
+    # Convert to 3x3 homogeneous form
+    return np.vstack([T, [0, 0, 1]])
+
+def from_homogeneous(T_hom):
+    # T_hom is 3x3
+    # Convert back to 2x3
+    return T_hom[:2, :]
 
 def recenter_warped_image(image, affine_matrix, output_size):
     """
@@ -243,29 +326,7 @@ def recenter_warped_image(image, affine_matrix, output_size):
 
     return recentered_image
 
-def order_points(points):
-    """
-    Order list of points based on angular position relative to the centroid (1st) and distance to centroid (2nd)
-    Inputs:
-    - points: 2D NumPy array of keypoints
 
-    Returns:
-    - ordered 2D NumPy array of keypoints
-    """
-    centroid = np.mean(points, axis=0)  # centroid
-
-    angles = np.arctan2(
-        points[:, 1] - centroid[1], points[:, 0] - centroid[0]
-    )  # angle about the centroid
-
-    distances = np.linalg.norm(points - centroid, axis=1)  # distance to centroid
-
-    # sort by angle first, then distance
-    criteria = np.column_stack((angles, distances))
-    ordered_indices = np.lexsort((criteria[:, 1], criteria[:, 0]))
-    ordered_points = points[ordered_indices]
-
-    return ordered_points
 
 
 def plot_transformations(
