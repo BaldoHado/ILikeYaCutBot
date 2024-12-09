@@ -17,7 +17,7 @@ def asm_predict(imagepath, resize=True, show=True):
     Returns:
     - tuple of the new image (resized if resize=True) and the predicted keypoints
     """
-    loaded_model = load_model("./asm_data/model/facial_keypoints_model_combined_dataset.h5")
+    loaded_model = load_model("./facial_keypoints_model_combined_dataset.h5")
     new_image = imageio.v2.imread(imagepath)
     if resize:
         new_image = cv2.resize(new_image, (250, 300)) / 255.0
@@ -325,9 +325,6 @@ def recenter_warped_image(image, affine_matrix, output_size):
     recentered_image = cv2.warpAffine(image, recenter_matrix, output_size, flags=cv2.INTER_LINEAR)
 
     return recentered_image
-
-
-
 
 def plot_transformations(
     hair_points, hair_points_aligned, predicted, similarity_disparity
