@@ -198,7 +198,7 @@ def get_optimal_hairstyle(
                     "bob with soft waves",
                     "side-swept bangs",
                     "pixie cut with volume",
-                    "asymmetrical lob",
+                    "asymmetrical bob",
                 ],
                 "explanation": dedent(
                     """Heart-shaped faces can benefit from hairstyles 

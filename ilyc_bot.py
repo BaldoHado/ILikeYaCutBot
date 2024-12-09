@@ -80,15 +80,8 @@ def ilyc_interface():
         predicted_points /= np.array([image_width, image_height])
         hair_points /= np.array([image_width, image_height])
 
-        # Make the hair points align with the predicted points
-        aligned_hair, similarity_disparity, affine_matrix = align_points_affine(
-            predicted_points, hair_points
-        )
-
-        # Apply affine transformation
-        output_size = (image_width, image_height)
-        hair_image = cv2.resize(hair_image, (250, 300)) / 255.0
-        transformed_hair = recenter_warped_image(hair_image, affine_matrix, output_size)
+        # Apply transformations
+        transformed_hair, aligned_hair, similarity_disparity = align_hair(hair_image, predicted_points, hair_points)
 
         # OPTIONAL: Plots (plots upside down because origin is at the bottom left but in images its at the top left)
         plot_transformations(

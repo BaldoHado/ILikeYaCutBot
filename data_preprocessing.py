@@ -66,6 +66,7 @@ def take_image_from_camera(output_file="camera_out.jpg"):
 
         # Convert frame to RGB for matplotlib
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        full_size = frame_rgb
 
         # Display the frame using matplotlib
         plt.imshow(frame_rgb)
@@ -84,16 +85,24 @@ def take_image_from_camera(output_file="camera_out.jpg"):
             captured_frame = (captured_frame * 255).astype(
                 np.uint8
             )  # Convert back to uint8
+
+            # Needed b/c Adam's model needs 128x128 but Chris's needs 250x300
+            full_size = resize(
+                frame_rgb, (250, 300, 3), mode="reflect", anti_aliasing=True
+            ).astype("float32")
+            full_size = (full_size * 255).astype(np.uint8)
             print(f"Image captured and saved to {output_file}")
             break
         else:
             continue
 
     # Save the captured frame if available
-    if captured_frame is not None:
-        cv2.imwrite(output_file, captured_frame)
+    if full_size is not None:  # write the 250x300 file, will be used later
+        cv2.imwrite(output_file, full_size[..., ::-1])
 
     # Release the camera
     camera.release()
     plt.close()
+
+    # Return the 128x128 image, only used in Adam's model
     return captured_frame

@@ -91,90 +91,60 @@ def load_pts_file(filepath):
         return np.array(points)
 
 # ======================================== ASM Transformation ========================================
-def align_points(reference, to_align):
+def align_hair(image, reference, to_align):
     """
-    Homography transformation to make to_align keypoints look more like reference keypoints
+    Aligns `to_align` to `reference` using procrustes and affine transformation.
+    Applies the same transformation to the inputted image
+
+    Parameters:
+        image (np.ndarray): Image to be transformed (hair image)
+        reference (np.ndarray): Ground truth points (face ASM points)
+        to_align (np.ndarray): Points to align (hair points)
     """
-    # 1) Order the points in both sets
     reference_ordered = order_points(reference)
     to_align_ordered = order_points(to_align)
+    aligned_points, similarity_disparity, affine_matrix = align_points_affine(reference_ordered, to_align_ordered)
 
-    # 2) Compute the centroid of the ground truth
-    reference_centroid = np.mean(reference_ordered, axis=0)
-    to_align_centroid = np.mean(to_align_ordered, axis=0)
+    output_size = (image.shape[1], image.shape[0])
+    image_normalized = cv2.resize(image, (250, 300)) / 255.0
+    procrustes_matrix = compute_procrustes_matrix(reference_ordered, to_align_ordered)
+    combined_matrix = combine_transforms(procrustes_matrix, affine_matrix)
+    transformed_image = cv2.warpAffine(image_normalized, combined_matrix, output_size)
 
-    # 3) Procrustes analysis for similarity transformation
-    ground_truth_centered = reference_ordered - reference_centroid
-    predicted_centered = to_align_ordered - to_align_centroid
+    # Use this instead of warpAffine to always center the hair
+    # transformed_image = recenter_warped_image(image_normalized, combined_matrix, output_size)
 
-    _, aligned_keypoints, similarity_disparity = procrustes(
-        ground_truth_centered, predicted_centered
-    )
-
-    # 4) Restore the aligned predicted points to the ground truth centroid
-    aligned_keypoints += reference_centroid
-
-    # 5) Homography transformation for finer alignment
-    homography_matrix, mask = cv2.findHomography(
-        aligned_keypoints, reference_ordered, cv2.RANSAC
-    )
-
-    # Filter out outliers
-    mask = mask.ravel().astype(bool)  # Convert mask to boolean
-    if not np.any(mask):  # If no inliers are found
-        print("No inliers found. Skipping homography refinement.")
-        return aligned_keypoints, similarity_disparity, None
-
-    # Apply mask
-    aligned_keypoints = aligned_keypoints[mask]
-    reference_ordered = reference_ordered[mask]
-
-    # Recompute homography with inliers only
-    homography_matrix, _ = cv2.findHomography(aligned_keypoints, reference_ordered, 0)
-
-    aligned_predicted_homo = np.hstack(
-        (aligned_keypoints, np.ones((aligned_keypoints.shape[0], 1)))
-    )  # Homogeneous coordinates
-    aligned_points_homo = aligned_predicted_homo @ homography_matrix.T
-    aligned_points = (
-        aligned_points_homo[:, :2] / aligned_points_homo[:, 2:]
-    )  # Back to Cartesian coordinates
-
-    return aligned_points, similarity_disparity, homography_matrix
+    return transformed_image, aligned_points, similarity_disparity
 
 
-def align_points_affine(reference, to_align):
+def align_points_affine(reference_ordered, to_align_ordered):
     """
     Aligns `to_align` points to `reference` points using an affine transformation.
 
     Parameters:
-        reference (np.ndarray): Ground truth points (N x 2 array, unordered).
-        to_align (np.ndarray): Points to align (N x 2 array, unordered).
+        reference (np.ndarray): Ground truth points (N x 2 array, ordered).
+        to_align (np.ndarray): Points to align (N x 2 array, ordered).
 
     Returns:
         aligned_points (np.ndarray): Aligned points after applying Procrustes and affine transformation.
         similarity_disparity (float): Disparity after Procrustes alignment.
         affine_matrix (np.ndarray): Affine transformation matrix.
     """
-    # 1) Order the points in both sets
-    reference_ordered = order_points(reference)
-    to_align_ordered = order_points(to_align)
-
-    # 2) Compute the centroid of the ground truth and align set
+    # 1) Compute the centroid of the ground truth and align set
     reference_centroid = np.mean(reference_ordered, axis=0)
     to_align_centroid = np.mean(to_align_ordered, axis=0)
 
-    # 3) Procrustes analysis for similarity transformation
+    # 2) Procrustes analysis for similarity transformation
     reference_centered = reference_ordered - reference_centroid
     to_align_centered = to_align_ordered - to_align_centroid
     _, aligned_keypoints, similarity_disparity = procrustes(
         reference_centered, to_align_centered
     )
 
-    # 4) Restore the aligned predicted points to the reference centroid
+    # 3) Restore the aligned predicted points to the reference centroid
     aligned_keypoints += reference_centroid
 
-    # 5) Compute affine transformation
+    # 4) Compute affine transformation
     affine_matrix, inliers = cv2.estimateAffinePartial2D(
         aligned_keypoints, reference_ordered, method=cv2.RANSAC
     )
@@ -183,7 +153,7 @@ def align_points_affine(reference, to_align):
         print("Affine transformation failed. Returning Procrustes-aligned points.")
         return aligned_keypoints, similarity_disparity, None
 
-    # Apply affine transformation
+    # 5) Apply affine transformation
     aligned_points = cv2.transform(
         np.expand_dims(aligned_keypoints, axis=0), affine_matrix
     )[0]
@@ -245,7 +215,9 @@ def compute_procrustes_matrix(reference_ordered, to_align_ordered):
     U, S, Vt = np.linalg.svd(A)
 
     # Compute rotation
-    R = U @ Vt
+    # NOTE: currently ignoring rotation --> assumes all orientation the same
+    # R = U @ Vt  # uncomment to include rotation
+    R = np.eye(2, dtype=np.float32)  # ignores rotation
     # Ensure a proper rotation (check for reflection)
     if np.linalg.det(R) < 0:
         U[:, -1] *= -1
@@ -266,7 +238,7 @@ def compute_procrustes_matrix(reference_ordered, to_align_ordered):
         [scale * R[1,0], scale * R[1,1], t[1]]
     ])
 
-    return P, scale, R, t
+    return P
 
 def to_homogeneous(T):
     # T is 2x3
@@ -277,6 +249,23 @@ def from_homogeneous(T_hom):
     # T_hom is 3x3
     # Convert back to 2x3
     return T_hom[:2, :]
+
+def combine_transforms(P, A):
+    """
+    Combine two affine transforms (2x3 matrices) by converting them to homogeneous form,
+    multiplying, then converting back.
+
+    P: Procrustes affine (original -> aligned_keypoints space)
+    A: Affine matrix from aligned_keypoints to reference space
+
+    Returns:
+        M (2x3 np.ndarray): combined transform from original points directly to reference.
+    """
+    P_hom = to_homogeneous(P)
+    A_hom = to_homogeneous(A)
+    M_hom = A_hom @ P_hom  # combine the transformations
+    M = from_homogeneous(M_hom)
+    return M
 
 def recenter_warped_image(image, affine_matrix, output_size):
     """
