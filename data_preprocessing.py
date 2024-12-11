@@ -105,4 +105,5 @@ def take_image_from_camera(output_file="camera_out.jpg"):
     plt.close()
 
     # Return the 128x128 image, only used in Adam's model
-    return captured_frame
+    captured_frame_no_bg = remove(captured_frame)
+    return captured_frame, captured_frame_no_bg

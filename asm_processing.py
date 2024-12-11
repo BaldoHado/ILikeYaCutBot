@@ -101,21 +101,28 @@ def align_hair(image, reference, to_align):
         reference (np.ndarray): Ground truth points (face ASM points)
         to_align (np.ndarray): Points to align (hair points)
     """
+    image_normalized = cv2.resize(image, (250, 300)) / 255.0
+    h, w = image.shape[:2]
+    output_size = (w, h)
+    # Matrix used to convert from top-left to bottom-left coordinates
+    F = np.array([
+        [1, 0,           0],
+        [0, -1, output_size[1]-1],
+        [0, 0,           1]
+    ], dtype=float)
+
     reference_ordered = order_points(reference)
     to_align_ordered = order_points(to_align)
     aligned_points, similarity_disparity, affine_matrix = align_points_affine(reference_ordered, to_align_ordered)
 
-    output_size = (image.shape[1], image.shape[0])
-    image_normalized = cv2.resize(image, (250, 300)) / 255.0
     procrustes_matrix = compute_procrustes_matrix(reference_ordered, to_align_ordered)
     combined_matrix = combine_transforms(procrustes_matrix, affine_matrix)
-    transformed_image = cv2.warpAffine(image_normalized, combined_matrix, output_size)
-
+    
+    # transformed_image = cv2.warpAffine(image_normalized, combined_matrix, output_size)
     # Use this instead of warpAffine to always center the hair
-    # transformed_image = recenter_warped_image(image_normalized, combined_matrix, output_size)
+    transformed_image = recenter_warped_image(image_normalized, combined_matrix, output_size)
 
     return transformed_image, aligned_points, similarity_disparity
-
 
 def align_points_affine(reference_ordered, to_align_ordered):
     """

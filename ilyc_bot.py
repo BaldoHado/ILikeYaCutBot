@@ -24,11 +24,12 @@ def ilyc_interface():
     )
     if image_mode == "c":
         filepath = "camera_out.jpg"
-        img = take_image_from_camera(filepath)
+        img, img_no_bg = take_image_from_camera(filepath)
     elif image_mode == "f":
         # NOTE: currently crashes if user quits while in camera mode :/
         filepath = input("Enter your filepath: ")
         img = take_image_from_filepath(filepath)
+        img_no_bg = img
     elif image_mode == "q":
         return
     else:
@@ -36,7 +37,7 @@ def ilyc_interface():
         return
 
     # Preview image after removing background and resizing; prompt for validity
-    plt.imshow(img)
+    plt.imshow(img_no_bg)
     plt.show()
     valid_input = input("Is this a valid picture? (y/n) ")
     if valid_input.lower() != "y":
